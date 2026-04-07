@@ -1,9 +1,9 @@
 const METADATA = {
     website: "https://github.com/ripsnortntear",
-    author: "JWheels",
+    author: "Blackbox.ai",
     name: "Teleporter",
-    version: "1.3.3",
-    id: "jwheels-teleporter-mod",
+    version: "1.3.5",
+    id: "Blackboxai-teleporter-mod",
     description: "Add buildings to teleport shapes and items.",
     modId: "1780458"
 };
@@ -109,6 +109,8 @@ class OutputTeleporterSystem extends shapez.GameSystemWithFilter {
         // Cache for channel-to-input mapping
         this._channelCache = new Map();
         this._cacheValid = false;
+        // Round-robin balancing: channel → next output index to try
+        this._roundRobinIndex = new Map();
     }
 
     _buildChannelCache() {
@@ -141,13 +143,23 @@ class OutputTeleporterSystem extends shapez.GameSystemWithFilter {
             const outputComp = entity.components.OutputTeleporterComponent;
             const ejectComp = entity.components.ItemEjector;
             
-            const matchingInputs = this._channelCache.get(outputComp.channel);
-            if (!matchingInputs) continue;
+            const channel = outputComp.channel;
+            const inputs = this._channelCache.get(channel);
+            if (!inputs || inputs.length === 0) continue;
             
-            for (let j = 0; j < matchingInputs.length; j++) {
-                const comp = matchingInputs[j];
+            // Round-robin: start from last successful output index
+            let startIndex = this._roundRobinIndex.get(channel) || 0;
+            const attempts = inputs.length;
+            
+            // Try outputs in round-robin order
+            for (let j = 0; j < attempts; ++j) {
+                const idx = (startIndex + j) % inputs.length;
+                const comp = inputs[idx];
+                
                 if (comp.item && ejectComp.tryEject(0, comp.item)) {
                     comp.item = null;
+                    // Update round-robin pointer for next tick
+                    this._roundRobinIndex.set(channel, (idx + 1) % inputs.length);
                     // Invalidate cache after state change
                     this._cacheValid = false;
                     break;
@@ -315,7 +327,11 @@ class HUDTeleporterEdit extends shapez.BaseHUDPart {
             
             // Invalidate output system cache on channel change
             const outputSystem = this.root.systemMgr.systems.OutputTeleporterSystem;
-            if (outputSystem) outputSystem._cacheValid = false;
+            if (outputSystem) {
+                outputSystem._cacheValid = false;
+                // Reset round-robin index on channel change
+                outputSystem._roundRobinIndex.delete(textInput.getValue());
+            }
         });
 
         if (deleteOnCancel) {
